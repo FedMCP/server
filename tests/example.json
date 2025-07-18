@@ -1,0 +1,8 @@
+{
+  "id": "11111111-2222-3333-4444-555555555555",
+  "type": "ssp_fragment",
+  "version": 1,
+  "workspaceId": "workspace-1",
+  "createdAt": "2025-06-16T00:00:00Z",
+  "jsonBody": { "summary": "FIPS module list" }
+}

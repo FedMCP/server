@@ -1,0 +1,411 @@
+openapi: 3.0.3
+info:
+  title: FedMCP API
+  description: |
+    Federal Model Context Protocol API for managing signed, auditable AI/ML artifacts
+    in government cloud environments. Provides cryptographic signing, verification,
+    and audit trail capabilities for FedRAMP compliance.
+  version: 0.2.0
+  contact:
+    email: api@fedmcp.dev
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.fedmcp.gov
+    description: Production server (GovCloud)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Check server health and version
+      tags:
+        - System
+      security: []
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  version:
+                    type: string
+                    example: 0.2.0
+
+  /artifacts:
+    post:
+      summary: Create and sign an artifact
+      description: |
+        Create a new FedMCP artifact and optionally sign it with JWS.
+        The artifact will be validated against size limits (1MB) and
+        stored with an immutable audit trail.
+      tags:
+        - Artifacts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - artifact
+              properties:
+                artifact:
+                  $ref: '#/components/schemas/Artifact'
+                sign:
+                  type: boolean
+                  default: true
+                  description: Whether to sign the artifact with JWS
+      responses:
+        '200':
+          description: Artifact created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JWSResponse'
+        '400':
+          description: Invalid artifact or exceeds size limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    get:
+      summary: List artifacts
+      description: List artifacts, optionally filtered by workspace
+      tags:
+        - Artifacts
+      parameters:
+        - name: workspace_id
+          in: query
+          description: Filter by workspace UUID
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          description: Maximum number of results
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+        - name: offset
+          in: query
+          description: Pagination offset
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of artifact IDs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artifacts:
+                    type: array
+                    items:
+                      type: string
+                      format: uuid
+                  count:
+                    type: integer
+                  total:
+                    type: integer
+
+  /artifacts/{artifact_id}:
+    get:
+      summary: Retrieve an artifact
+      description: Get a specific artifact by ID with its JWS signature
+      tags:
+        - Artifacts
+      parameters:
+        - name: artifact_id
+          in: path
+          required: true
+          description: Artifact UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Artifact retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  artifact:
+                    $ref: '#/components/schemas/Artifact'
+                  jws:
+                    type: string
+                    description: JWS signature if available
+        '404':
+          description: Artifact not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /artifacts/verify:
+    post:
+      summary: Verify an artifact signature
+      description: |
+        Verify the JWS signature of an artifact. Returns the artifact
+        data if signature is valid, or an error if verification fails.
+      tags:
+        - Artifacts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - jws
+              properties:
+                jws:
+                  type: string
+                  description: JWS token to verify
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyResponse'
+
+  /audit/events:
+    get:
+      summary: Query audit events
+      description: |
+        Retrieve audit events filtered by artifact, workspace, or time range.
+        Events are immutable and retained per compliance requirements.
+      tags:
+        - Audit
+      parameters:
+        - name: artifact_id
+          in: query
+          description: Filter by artifact UUID
+          schema:
+            type: string
+            format: uuid
+        - name: workspace_id
+          in: query
+          description: Filter by workspace UUID
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          description: Filter by action type
+          schema:
+            type: string
+            enum: [create, read, update, delete, verify, sign]
+        - name: start_time
+          in: query
+          description: Start time (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          description: End time (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: Maximum number of results
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+      responses:
+        '200':
+          description: Audit events retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditEvent'
+
+  /jwks:
+    get:
+      summary: Get public keys for verification
+      description: |
+        Retrieve public keys in JWK format for verifying artifact signatures.
+        Keys are rotated every 180 days per FedRAMP requirements.
+      tags:
+        - Keys
+      security: []
+      responses:
+        '200':
+          description: JWK Set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/JWK'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Artifact:
+      type: object
+      required:
+        - type
+        - version
+        - workspaceId
+        - jsonBody
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique artifact identifier
+          readOnly: true
+        type:
+          type: string
+          description: Artifact type
+          enum:
+            - ssp_fragment
+            - poam_template
+            - agent_recipe
+            - baseline_module
+            - audit_script
+            - rag_query
+            - llm_completion
+            - tool_invocation
+        version:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Artifact version number
+        workspaceId:
+          type: string
+          format: uuid
+          description: Workspace UUID for multi-tenant isolation
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp
+          readOnly: true
+        jsonBody:
+          type: object
+          description: Artifact payload (max 1MB)
+          additionalProperties: true
+
+    JWSResponse:
+      type: object
+      properties:
+        jws:
+          type: string
+          description: JWS signed token
+        artifact_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+
+    VerifyResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        artifact:
+          $ref: '#/components/schemas/Artifact'
+        error:
+          type: string
+
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        action:
+          type: string
+          enum: [create, read, update, delete, verify, sign]
+        actor:
+          type: string
+          description: User or service account
+        artifactId:
+          type: string
+          format: uuid
+        workspaceId:
+          type: string
+          format: uuid
+        metadata:
+          type: object
+          additionalProperties: true
+
+    JWK:
+      type: object
+      properties:
+        kty:
+          type: string
+          enum: [EC]
+        crv:
+          type: string
+          enum: [P-256]
+        x:
+          type: string
+          description: Base64url encoded x coordinate
+        y:
+          type: string
+          description: Base64url encoded y coordinate
+        use:
+          type: string
+          enum: [sig]
+        kid:
+          type: string
+          description: Key identifier
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
